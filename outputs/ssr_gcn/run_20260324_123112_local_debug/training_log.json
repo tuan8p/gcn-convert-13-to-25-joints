@@ -1,0 +1,21 @@
+{
+  "log": [
+    {
+      "epoch": 1,
+      "lr": 0.000505,
+      "train_loss": 0.16942577227950095,
+      "train_mpjpe": 0.5855464775745686,
+      "train_missing_mpjpe": 0.6283555703896743,
+      "train_visible_mpjpe": 0.5460303918214945,
+      "train_bone_error": 0.19178794494042029,
+      "train_samples_per_sec": 7.817800337078997,
+      "val_loss": 0.0734525728911002,
+      "val_mpjpe": 0.3793757271001683,
+      "val_missing_mpjpe": 0.40317198936951987,
+      "val_visible_mpjpe": 0.3574099432338368,
+      "val_bone_error": 0.1350326101011771,
+      "val_samples_per_sec": 20.158323907161346,
+      "epoch_time_sec": 83.1435918000002
+    }
+  ]
+}

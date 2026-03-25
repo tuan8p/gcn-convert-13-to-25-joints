@@ -1,5 +1,5 @@
 dataset:
-  npy_merged_path: ../data/processed/npy_merged
+  npy_merged_path: /kaggle/input/datasets/tuan8p/ear-anticipation-dataset # ../data/processed/npy_merged
   train_ratio: 0.7
   val_ratio: 0.2
   test_ratio: 0.1
@@ -26,7 +26,7 @@ loss:
 training:
   per_gpu_batch_size: 8
   val_per_gpu_batch_size: 16
-  epochs: 1
+  epochs: 50
   lr: 0.001
   min_lr: 0.00001
   weight_decay: 0.0001
@@ -46,9 +46,11 @@ ddp:
 
 experiment:
   seed: 42
-  early_stopping: true
+  early_stopping: false
   early_stopping_patience: 10
   output_dir: outputs/ssr_gcn
+  # Fraction of train/val/test metadata rows to keep (1.0 = all). CLI --subset-ratio overrides.
+  subset_ratio: 1.0
 
 wandb:
   enabled: false

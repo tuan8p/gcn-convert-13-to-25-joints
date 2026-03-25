@@ -50,6 +50,23 @@ def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     return model.module if isinstance(model, DDP) else model
 
 
+def _resolve_training_cli(cfg: dict[str, Any], args: Any) -> tuple[float, int]:
+    """Resolve subset_ratio and max epochs: CLI overrides YAML when provided."""
+    subset = getattr(args, "subset_ratio", None)
+    if subset is None:
+        subset = float((cfg.get("experiment") or {}).get("subset_ratio", 1.0))
+    else:
+        subset = float(subset)
+
+    max_ep = getattr(args, "max_epochs", None)
+    if max_ep is None:
+        epochs = int((cfg.get("training") or {}).get("epochs", 50))
+    else:
+        epochs = int(max_ep)
+
+    return subset, epochs
+
+
 def _resolve_output_dir(cfg: dict[str, Any]) -> Path:
     experiment_cfg = cfg.get("experiment") or {}
     output_root = Path(experiment_cfg.get("output_dir", "outputs/ssr_gcn")).resolve()
@@ -396,7 +413,8 @@ def run(cfg: dict[str, Any], args: Any) -> int:
         with (output_dir / "run_config.yaml").open("w", encoding="utf-8") as file:
             yaml.safe_dump(cfg, file, allow_unicode=True, sort_keys=False)
 
-    root, split, datasets = _build_datasets(cfg, subset_ratio=float(getattr(args, "subset_ratio", 1.0)))
+    subset_ratio, epochs = _resolve_training_cli(cfg, args)
+    root, split, datasets = _build_datasets(cfg, subset_ratio=subset_ratio)
     train_loader, val_loader, test_loader, train_sampler = _build_loaders(cfg, datasets)
 
     if is_rank0():
@@ -425,7 +443,6 @@ def run(cfg: dict[str, Any], args: Any) -> int:
         wandb_logger.log_config(cfg)
 
     training_log: list[dict[str, Any]] = []
-    epochs = int(getattr(args, "max_epochs", None) or (cfg.get("training") or {}).get("epochs", 50))
     patience = int((cfg.get("experiment") or {}).get("early_stopping_patience", 10))
     best_metric = float("inf")
     best_epoch = 0

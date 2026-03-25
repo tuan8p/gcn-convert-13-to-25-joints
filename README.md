@@ -63,23 +63,40 @@ Smoke test se:
 
 ## Train
 
-Single GPU:
+Chay tu thu muc goc cua repo (`gcn-convert-13-to-25-joints`).
+
+**Quy tac tham so:** moi arg tren dong lenh la **tuy chon**. Khong truyen arg nao thi toan bo gia tri
+lay tu file YAML (mac dinh `configs/ssr_gcn_kaggle.yaml`). **Truyen arg thi chi ghi de dung muc do**
+trong config, cac muc khac van theo YAML.
+
+| Arg CLI | Khi co truyen thi ghi de |
+|---------|---------------------------|
+| `--config` | Duong file YAML (mac dinh: `configs/ssr_gcn_kaggle.yaml`) |
+| `--runtime-profile` | Profile trong `runtime_profile:` (neu bo trong, dung `runtime.profile` trong YAML) |
+| `--max-epochs` | `training.epochs` |
+| `--subset-ratio` | `experiment.subset_ratio` |
+| `--lr` | `training.lr` |
+| `--per-gpu-batch-size` | `training.per_gpu_batch_size` |
+
+Single GPU — chi can config:
 
 ```bash
-python tools/train.py --config configs/ssr_gcn_kaggle.yaml --runtime-profile t4
+python tools/train.py
 ```
 
-Multi-GPU (`2xT4`, torchrun):
+Multi-GPU (`torchrun`):
 
 ```bash
-torchrun --standalone --nproc_per_node=2 tools/train.py --config configs/ssr_gcn_kaggle.yaml --runtime-profile t4
+torchrun --standalone --nproc_per_node=2 tools/train.py
 ```
 
-Debug nhanh tren subset:
+Vi du ghi de mot vai tham so, con lai van theo YAML:
 
 ```bash
-python tools/train.py --config configs/ssr_gcn_kaggle.yaml --runtime-profile local_debug --subset-ratio 0.02 --max-epochs 2
+python tools/train.py --runtime-profile local_debug --subset-ratio 0.02 --max-epochs 2 --lr 0.0005
 ```
+
+Xem them: `python tools/train.py --help` (cuoi help co tom tat map arg → YAML).
 
 ## Output train
 
