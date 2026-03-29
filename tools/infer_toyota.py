@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -90,6 +91,9 @@ def main() -> int:
     with (output_dir / "inference_manifest.json").open("w", encoding="utf-8") as file:
         json.dump(manifest, file, indent=2, ensure_ascii=False)
     print(f"[done] Saved {len(manifest)} inferred sequences to {output_dir}")
+
+    zip_path = shutil.make_archive(str(output_dir), "zip", root_dir=output_dir.parent, base_dir=output_dir.name)
+    print(f"[done] Zipped to {zip_path}")
     return 0
 
 
