@@ -32,8 +32,19 @@ def is_rank0() -> bool:
 
 
 def setup_distributed(backend: str = "nccl") -> torch.device:
-    """Initialize distributed training if launched via torchrun."""
+    """Initialize distributed training if launched via torchrun.
+
+    Sets NCCL environment variables before init_process_group to avoid
+    hostname-resolution failures on shared cloud environments (Kaggle, etc.).
+    Variables are only set when not already configured by the caller.
+    """
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        # Disable P2P and InfiniBand; use any non-loopback/docker interface.
+        # These defaults prevent the "hostname cannot be retrieved" NCCL warning
+        # on Kaggle 2×T4 and similar shared PCIe setups.
+        os.environ.setdefault("NCCL_P2P_DISABLE", "1")
+        os.environ.setdefault("NCCL_IB_DISABLE", "1")
+        os.environ.setdefault("NCCL_SOCKET_IFNAME", "^lo,docker")
         if not dist.is_initialized():
             dist.init_process_group(backend=backend)
         if torch.cuda.is_available():

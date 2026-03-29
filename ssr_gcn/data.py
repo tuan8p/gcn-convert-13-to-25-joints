@@ -348,10 +348,11 @@ def augment_pair(
         input_13 = input_13 @ rotation.T
         target_25 = target_25 @ rotation.T
     if jitter_std > 0:
+        # Noise only on input_13, not target_25.  Adding independent noise to
+        # target_25 would make visible joints in input and target inconsistent
+        # (same physical joint, different coordinates) and corrupt supervision.
         noise_13 = rng.normal(0.0, jitter_std, size=input_13.shape).astype(np.float32)
-        noise_25 = rng.normal(0.0, jitter_std, size=target_25.shape).astype(np.float32)
         input_13 = input_13 + noise_13
-        target_25 = target_25 + noise_25
     return input_13.astype(np.float32), target_25.astype(np.float32)
 
 

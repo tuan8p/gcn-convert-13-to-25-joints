@@ -432,7 +432,15 @@ def run(cfg: dict[str, Any], args: Any) -> int:
     model = create_model(cfg).to(device)
     model = _maybe_compile(model, cfg)
     if is_distributed():
-        model = DDP(model, device_ids=[device.index] if device.type == "cuda" else None)
+        # broadcast_buffers=False: DDP default (True) broadcasts all registered
+        # buffers (adjacency matrices + BN statistics) at the start of EVERY forward.
+        # Rank 0 calls _run_eval_epoch alone → triggers a ~7 K-element broadcast
+        # that rank 1 never receives → NCCL hangs for the full 600 s timeout.
+        model = DDP(
+            model,
+            device_ids=[device.index] if device.type == "cuda" else None,
+            broadcast_buffers=False,
+        )
 
     optimizer = _build_optimizer(cfg, model)
     scheduler = _build_scheduler(cfg, optimizer)
@@ -467,7 +475,7 @@ def run(cfg: dict[str, Any], args: Any) -> int:
             barrier()
 
             if is_rank0():
-                val_metrics = _run_eval_epoch(model, val_loader, device, cfg, desc=f"Val {epoch}")
+                val_metrics = _run_eval_epoch(_unwrap_model(model), val_loader, device, cfg, desc=f"Val {epoch}")
                 epoch_log = {
                     "epoch": epoch,
                     "lr": float(optimizer.param_groups[0]["lr"]),
@@ -499,7 +507,7 @@ def run(cfg: dict[str, Any], args: Any) -> int:
                     epochs_without_improvement += 1
 
                 print(
-                    f"[epoch {epoch:03d}] "
+                    f"[epoch {epoch:03d}/{epochs}] "
                     f"train_loss={epoch_log['train_loss']:.4f} "
                     f"train_mpjpe={epoch_log['train_mpjpe']:.4f} "
                     f"val_loss={epoch_log['val_loss']:.4f} "
@@ -507,11 +515,12 @@ def run(cfg: dict[str, Any], args: Any) -> int:
                     f"val_bone={epoch_log['val_bone_error']:.4f} "
                     f"lr={epoch_log['lr']:.2e} "
                     f"train_sps={epoch_log['train_samples_per_sec']:.1f} "
-                    f"val_sps={epoch_log['val_samples_per_sec']:.1f}"
+                    f"val_sps={epoch_log['val_samples_per_sec']:.1f}",
+                    flush=True,
                 )
 
                 if bool((cfg.get("experiment") or {}).get("early_stopping", True)) and epochs_without_improvement >= patience:
-                    print(f"[early-stopping] Triggered at epoch {epoch}.")
+                    print(f"[early-stopping] Triggered at epoch {epoch}.", flush=True)
                     stop_tensor = torch.tensor([1], dtype=torch.int64, device=device)
                 else:
                     stop_tensor = torch.tensor([0], dtype=torch.int64, device=device)
@@ -529,7 +538,7 @@ def run(cfg: dict[str, Any], args: Any) -> int:
         if is_rank0():
             if best_checkpoint_path.exists():
                 _load_checkpoint(model, best_checkpoint_path, device=device)
-            test_metrics = _run_eval_epoch(model, test_loader, device, cfg, desc="Test")
+            test_metrics = _run_eval_epoch(_unwrap_model(model), test_loader, device, cfg, desc="Test")
             test_metrics["best_epoch"] = best_epoch
             test_metrics["best_val_mpjpe"] = best_metric
 
@@ -550,7 +559,7 @@ def run(cfg: dict[str, Any], args: Any) -> int:
             save_all_figures(training_log=training_log, test_metrics=test_metrics, output_dir=output_dir)
             wandb_logger.log_test_metrics(test_metrics)
             wandb_logger.log_figures_dir(output_dir / "figures")
-            print(f"[done] Output saved to {output_dir}")
+            print(f"[done] Output saved to {output_dir}", flush=True)
     finally:
         if is_rank0():
             wandb_logger.finish()
