@@ -24,8 +24,8 @@ loss:
   bone_weight: 0.1
 
 training:
-  per_gpu_batch_size: 8
-  val_per_gpu_batch_size: 16
+  per_gpu_batch_size: 128
+  val_per_gpu_batch_size: 256
   epochs: 50
   lr: 0.001
   min_lr: 0.00001
@@ -65,8 +65,8 @@ runtime:
 runtime_profile:
   t4:
     training:
-      per_gpu_batch_size: 8
-      val_per_gpu_batch_size: 16
+      per_gpu_batch_size: 128
+      val_per_gpu_batch_size: 256
       num_workers: 4
       use_amp: true
       amp_dtype: float16
