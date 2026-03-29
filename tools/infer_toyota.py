@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Infer 25-joint skeletons from Toyota-style 13-joint input.
-python tools/infer_toyota.py --checkpoint outputs/ssr_gcn/<run>/best_model.pt --input-dir ../data/processed/npy_merged/toyota_smarthome --output-dir outputs/toyota_infer --config configs/ssr_gcn_kaggle.yaml
+
+python tools/infer_toyota.py \
+  --checkpoint outputs/ssr_gcn/<run>/best_model.pt \
+  --input-dir ../data/processed/npy_merged/toyota_smarthome \
+  --output-dir outputs/toyota_infer \
+  --preserve-length          # keep original n_frames (recommended for EAR downstream)
 """
 
 from __future__ import annotations
@@ -21,7 +26,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from ssr_gcn.config import load_cfg
 from ssr_gcn.constants import DEFAULT_CONFIG_PATH
-from ssr_gcn.data import prepare_inference_input, restore_prediction
+from ssr_gcn.data import (
+    compute_root_and_scale,
+    extract_toyota_13,
+    prepare_inference_input,
+    restore_prediction,
+)
 from ssr_gcn.model import create_model
 
 
@@ -36,6 +46,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--runtime-profile", type=str, default=None, dest="runtime_profile")
     parser.add_argument("--glob", type=str, default="*.npy")
+    parser.add_argument(
+        "--preserve-length",
+        action="store_true",
+        dest="preserve_length",
+        help=(
+            "Keep original n_frames instead of resampling to fixed_len. "
+            "Recommended for EAR downstream pipelines (MotionBERT, SkateFormer) "
+            "that handle their own temporal sampling."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -45,6 +65,28 @@ def load_model(cfg: dict, checkpoint_path: Path, device: torch.device) -> torch.
     model.load_state_dict(payload["model_state_dict"])
     model.eval()
     return model
+
+
+def _prepare_preserve_length(sequence: np.ndarray) -> dict:
+    """Normalize without resampling — keep original T."""
+    if sequence.ndim == 4:
+        sequence = sequence[:, 0, :, :]
+    if sequence.ndim != 3 or sequence.shape[-1] != 3:
+        raise ValueError(f"Expected (T, J, 3), got {sequence.shape}")
+    if sequence.shape[1] == 25:
+        input_13 = extract_toyota_13(sequence)
+    elif sequence.shape[1] == 13:
+        input_13 = sequence.astype(np.float32)
+    else:
+        raise ValueError(f"Expected 13 or 25 joints, got {sequence.shape[1]}")
+
+    root_center, scale = compute_root_and_scale(input_13)
+    input_13_norm = (input_13 - root_center[:, None, :]) / scale
+    return {
+        "input_13": input_13_norm.astype(np.float32),
+        "root_center": root_center.astype(np.float32),
+        "scale": np.asarray(scale, dtype=np.float32),
+    }
 
 
 @torch.no_grad()
@@ -63,10 +105,19 @@ def main() -> int:
     if not npy_files:
         raise FileNotFoundError(f"No `.npy` files found in {input_dir}")
 
-    manifest: list[dict[str, str | int | float]] = []
+    mode = "preserve_length" if args.preserve_length else f"fixed_len={fixed_len}"
+    print(f"[infer] {len(npy_files)} files  mode={mode}  device={device}", flush=True)
+
+    manifest: list[dict] = []
     for npy_file in tqdm(npy_files, desc="Infer Toyota", unit="file"):
         sequence = np.load(npy_file, allow_pickle=False).astype(np.float32)
-        prepared = prepare_inference_input(sequence, fixed_len=fixed_len)
+        orig_frames = int(sequence.shape[0])
+
+        if args.preserve_length:
+            prepared = _prepare_preserve_length(sequence)
+        else:
+            prepared = prepare_inference_input(sequence, fixed_len=fixed_len)
+
         inputs = torch.from_numpy(prepared["input_13"]).unsqueeze(0).to(device)
         prediction_norm = model(inputs).squeeze(0).cpu().numpy()
         prediction = restore_prediction(
@@ -84,16 +135,19 @@ def main() -> int:
                 "input_file": str(npy_file),
                 "output_file": str(output_path),
                 "input_joints": int(sequence.shape[1]),
+                "orig_frames": orig_frames,
                 "output_shape": list(prediction.shape),
             }
         )
 
     with (output_dir / "inference_manifest.json").open("w", encoding="utf-8") as file:
         json.dump(manifest, file, indent=2, ensure_ascii=False)
-    print(f"[done] Saved {len(manifest)} inferred sequences to {output_dir}")
+    print(f"[done] Saved {len(manifest)} inferred sequences to {output_dir}", flush=True)
 
-    zip_path = shutil.make_archive(str(output_dir), "zip", root_dir=output_dir.parent, base_dir=output_dir.name)
-    print(f"[done] Zipped to {zip_path}")
+    zip_path = shutil.make_archive(
+        str(output_dir), "zip", root_dir=output_dir.parent, base_dir=output_dir.name
+    )
+    print(f"[done] Zipped to {zip_path}", flush=True)
     return 0
 
 
