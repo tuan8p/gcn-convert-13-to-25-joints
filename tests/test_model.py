@@ -27,9 +27,17 @@ class TestBuildAdjacency:
         adj = build_adjacency(25)
         assert adj.shape == (25, 25)
 
-    def test_symmetric(self):
+    def test_row_normalized_not_symmetric(self):
+        """
+        build_adjacency uses row normalization (D⁻¹·A): each row i is divided by
+        degree(i).  Because different joints have different degrees, A[i,j] ≠ A[j,i]
+        in general — the matrix is intentionally asymmetric.
+        Symmetric normalization (D⁻¹ᐟ²·A·D⁻¹ᐟ²) would be a different design choice.
+        """
         adj = build_adjacency(25)
-        assert torch.allclose(adj, adj.T, atol=1e-6)
+        # Row sums of the raw adjacency before normalization vary per joint,
+        # so the normalized result is generally not equal to its transpose.
+        assert not torch.allclose(adj, adj.T, atol=1e-6)
 
     def test_nonnegative(self):
         adj = build_adjacency(25)

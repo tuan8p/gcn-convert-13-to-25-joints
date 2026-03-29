@@ -121,6 +121,11 @@ class TestUnwrapModel:
         assert _unwrap_model(model) is model
 
     def test_ddp_wrapped_returns_inner(self):
+        """
+        _unwrap_model checks isinstance(model, DDP). Patch the DDP symbol in engine
+        so FakeDDP satisfies the isinstance check — that is the only way to test
+        the unwrap path without a real distributed process group.
+        """
         inner = nn.Linear(4, 4)
 
         class FakeDDP(nn.Module):
@@ -128,8 +133,11 @@ class TestUnwrapModel:
                 super().__init__()
                 self.module = m
 
-        wrapped = FakeDDP(inner)
-        assert _unwrap_model(wrapped) is inner
+        with mock.patch("ssr_gcn.engine.DDP", FakeDDP):
+            wrapped = FakeDDP(inner)
+            result = _unwrap_model(wrapped)
+
+        assert result is inner
 
     def test_unwrap_gives_trainable_params(self):
         inner = nn.Linear(4, 4)
@@ -139,9 +147,10 @@ class TestUnwrapModel:
                 super().__init__()
                 self.module = m
 
-        wrapped = FakeDDP(inner)
-        unwrapped = _unwrap_model(wrapped)
-        # Unwrapped model should have same parameters as inner
+        with mock.patch("ssr_gcn.engine.DDP", FakeDDP):
+            wrapped = FakeDDP(inner)
+            unwrapped = _unwrap_model(wrapped)
+
         for p1, p2 in zip(unwrapped.parameters(), inner.parameters()):
             assert p1 is p2
 

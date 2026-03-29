@@ -198,5 +198,5 @@ class TestTrainingStep:
 
         optimizer.step()
 
-        assert float(loss) > 0.0
+        assert loss.item() > 0.0
         assert torch.isfinite(pred).all()
