@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -400,6 +401,13 @@ def _run_eval_epoch(
     return metrics
 
 
+def _zip_output(output_dir: Path) -> None:
+    zip_path = output_dir.parent / output_dir.name
+    shutil.make_archive(str(zip_path), "zip", root_dir=output_dir.parent, base_dir=output_dir.name)
+    final = zip_path.with_suffix(".zip")
+    print(f"[done] Zipped to {final}", flush=True)
+
+
 def _count_params(model: torch.nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -599,6 +607,7 @@ def run(cfg: dict[str, Any], args: Any) -> int:
             wandb_logger.log_test_metrics(test_metrics)
             wandb_logger.log_figures_dir(output_dir / "figures")
             print(f"[done] Output saved to {output_dir}", flush=True)
+            _zip_output(output_dir)
     finally:
         if is_rank0():
             wandb_logger.finish()

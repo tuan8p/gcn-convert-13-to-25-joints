@@ -26,7 +26,7 @@ loss:
 training:
   per_gpu_batch_size: 128
   val_per_gpu_batch_size: 256
-  epochs: 50
+  epochs: 10
   lr: 0.001
   min_lr: 0.00001
   weight_decay: 0.0001
