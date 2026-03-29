@@ -522,6 +522,7 @@ def run(cfg: dict[str, Any], args: Any) -> int:
             barrier()
 
             if is_rank0():
+                print(f"[epoch {epoch:03d}] Train done — running val eval...", flush=True)
                 val_metrics = _run_eval_epoch(_unwrap_model(model), val_loader, device, cfg, desc=f"Val {epoch}")
                 epoch_log = {
                     "epoch": epoch,
@@ -583,6 +584,7 @@ def run(cfg: dict[str, Any], args: Any) -> int:
         barrier()
 
         if is_rank0():
+            print("[test] Running final test eval...", flush=True)
             if best_checkpoint_path.exists():
                 _load_checkpoint(model, best_checkpoint_path, device=device)
             test_metrics = _run_eval_epoch(_unwrap_model(model), test_loader, device, cfg, desc="Test")
