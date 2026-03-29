@@ -10,25 +10,25 @@ preprocessing:
 
 augmentation:
   enabled: true
-  rotation_deg: 10.0
-  jitter_std: 0.005
+  rotation_deg: 15.0   # tăng nhẹ để model học robust hơn với missing extremity joints
+  jitter_std: 0.008
 
 model:
-  hidden_channels: 96
-  num_blocks: 6
+  hidden_channels: 128  # tăng từ 96 để có capacity học missing joints tốt hơn
+  num_blocks: 8         # tăng từ 6 để stack GCN sâu hơn
   temporal_kernel: 9
   dropout: 0.1
 
 loss:
   joint_weight: 1.0
-  bone_weight: 0.1
+  bone_weight: 0.3      # tăng từ 0.1 để penalize sai lệch tỷ lệ cơ thể mạnh hơn (đặc biệt foot joints)
 
 training:
   per_gpu_batch_size: 128
   val_per_gpu_batch_size: 256
-  epochs: 50
+  epochs: 100           # tăng từ 50 vì run trước best ở epoch 50 (cuối) — chưa hội tụ
   lr: 0.001
-  min_lr: 0.00001
+  min_lr: 0.000005      # giảm floor để cosine decay có dải rộng hơn ở 100 epoch
   weight_decay: 0.0001
   scheduler: cosine
   lr_decay: 0.98
@@ -46,14 +46,13 @@ ddp:
 
 experiment:
   seed: 42
-  early_stopping: false
-  early_stopping_patience: 10
+  early_stopping: true  # bật vì train dài hơn, tránh lãng phí compute nếu hội tụ sớm
+  early_stopping_patience: 15
   output_dir: outputs/ssr_gcn
-  # Fraction of train/val/test metadata rows to keep (1.0 = all). CLI --subset-ratio overrides.
   subset_ratio: 1.0
 
 wandb:
-  enabled: false
+  enabled: true
   project: DACN-SSR
   entity: tuan8p
   run_name: ssr_gcn_etri_elderly
