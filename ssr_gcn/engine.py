@@ -400,10 +400,21 @@ def _run_eval_epoch(
     return metrics
 
 
+def _count_params(model: torch.nn.Module) -> int:
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def run(cfg: dict[str, Any], args: Any) -> int:
     """Run training, validation, test, and artifact export."""
+    print(f"[init] Setting up distributed...", flush=True)
     device = setup_distributed(backend=str((cfg.get("ddp") or {}).get("backend", "nccl")))
     seed_everything(int((cfg.get("experiment") or {}).get("seed", 42)) + rank())
+    if is_rank0():
+        print(
+            f"[init] rank={rank()}/{world_size()} device={device}  "
+            f"(hostname warning above is harmless on Kaggle)",
+            flush=True,
+        )
 
     output_dir_obj = _resolve_output_dir(cfg) if is_rank0() else None
     output_dir = Path(broadcast_object(str(output_dir_obj) if output_dir_obj is not None else None))
@@ -412,10 +423,27 @@ def run(cfg: dict[str, Any], args: Any) -> int:
         output_dir.mkdir(parents=True, exist_ok=True)
         with (output_dir / "run_config.yaml").open("w", encoding="utf-8") as file:
             yaml.safe_dump(cfg, file, allow_unicode=True, sort_keys=False)
+        print(f"[init] Output dir: {output_dir}", flush=True)
 
     subset_ratio, epochs = _resolve_training_cli(cfg, args)
+    if is_rank0():
+        print(f"[data] Loading metadata and splitting subjects...", flush=True)
     root, split, datasets = _build_datasets(cfg, subset_ratio=subset_ratio)
+    if is_rank0():
+        print(
+            f"[data] Split done — train={len(split.train)}  val={len(split.val)}  test={len(split.test)}"
+            f"  (subset_ratio={subset_ratio:.2f}  root={root})",
+            flush=True,
+        )
+
     train_loader, val_loader, test_loader, train_sampler = _build_loaders(cfg, datasets)
+    if is_rank0():
+        bs = int((cfg.get("training") or {}).get("per_gpu_batch_size", 8))
+        print(
+            f"[data] DataLoaders ready — "
+            f"train_batches={len(train_loader)}  batch_size={bs}×{world_size()}GPU",
+            flush=True,
+        )
 
     if is_rank0():
         save_json(output_dir / "split_info.json", split.info)
@@ -429,8 +457,12 @@ def run(cfg: dict[str, Any], args: Any) -> int:
             },
         )
 
+    if is_rank0():
+        print(f"[model] Building model...", flush=True)
     model = create_model(cfg).to(device)
     model = _maybe_compile(model, cfg)
+    if is_rank0():
+        print(f"[model] Trainable params: {_count_params(model):,}", flush=True)
     if is_distributed():
         # broadcast_buffers=False: DDP default (True) broadcasts all registered
         # buffers (adjacency matrices + BN statistics) at the start of EVERY forward.
@@ -456,6 +488,13 @@ def run(cfg: dict[str, Any], args: Any) -> int:
     best_epoch = 0
     epochs_without_improvement = 0
     best_checkpoint_path = output_dir / "best_model.pt"
+
+    if is_rank0():
+        print(
+            f"[train] Starting — epochs={epochs}  patience={patience}  "
+            f"lr={float((cfg.get('training') or {}).get('lr', 1e-3)):.2e}",
+            flush=True,
+        )
 
     try:
         for epoch in range(1, epochs + 1):
