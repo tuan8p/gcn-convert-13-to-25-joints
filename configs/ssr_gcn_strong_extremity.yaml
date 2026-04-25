@@ -55,6 +55,7 @@ training:
 
 ddp:
   backend: nccl
+  drop_last: true
 
 experiment:
   seed: 42

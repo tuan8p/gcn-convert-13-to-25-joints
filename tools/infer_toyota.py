@@ -6,6 +6,9 @@ python tools/infer_toyota.py \
   --input-dir ../data/processed/npy_merged/toyota_smarthome \
   --output-dir outputs/toyota_infer \
   --preserve-length          # keep original n_frames (recommended for EAR downstream)
+
+# Kaggle: sau khi train, không cần sửa tên thư mục run_* — dùng:
+#   --use-latest-checkpoint
 """
 
 from __future__ import annotations
@@ -35,12 +38,48 @@ from ssr_gcn.data import (
 from ssr_gcn.model import create_model
 
 
+def _find_latest_best_model(search_root: Path) -> Path:
+    """Newest `outputs/ssr_gcn/run_*/best_model.pt` by mtime (Kaggle: avoid hardcoding run id)."""
+    if not search_root.is_dir():
+        raise FileNotFoundError(
+            f"SSR output root not found: {search_root}. Train first (tools/train.py) "
+            f"or set --checkpoint to a .pt file."
+        )
+    candidates = list(search_root.glob("run_*/best_model.pt"))
+    if not candidates:
+        raise FileNotFoundError(
+            f"No run_*/best_model.pt under {search_root}. Run training in this session or "
+            f"point --checkpoint to a .pt (e.g. from a Kaggle output dataset)."
+        )
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run SSR inference on Toyota 13-joint sequences.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to best_model.pt. Omit if using --use-latest-checkpoint.",
+    )
+    parser.add_argument(
+        "--use-latest-checkpoint",
+        action="store_true",
+        help=(
+            "Use the newest best_model.pt under <repo>/outputs/ssr_gcn/run_*/ "
+            "(saves hardcoding run_* folder on Kaggle after each train)."
+        ),
+    )
+    parser.add_argument(
+        "--outputs-root",
+        type=str,
+        default=None,
+        dest="outputs_root",
+        help="With --use-latest-checkpoint, search this dir for run_*/best_model.pt (default: <repo>/outputs/ssr_gcn).",
+    )
     parser.add_argument("--input-dir", type=str, required=True, dest="input_dir")
     parser.add_argument("--output-dir", type=str, required=True, dest="output_dir")
     parser.add_argument("--config", type=str, default=str(DEFAULT_CONFIG_PATH))
@@ -60,8 +99,17 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_model(cfg: dict, checkpoint_path: Path, device: torch.device) -> torch.nn.Module:
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(
+            f"Checkpoint not found: {checkpoint_path}\n"
+            f"  Train in this Kaggle session (new run_ folder), then use "
+            f"--use-latest-checkpoint or pass the correct path to best_model.pt."
+        )
     model = create_model(cfg).to(device)
-    payload = torch.load(checkpoint_path, map_location=device)
+    try:
+        payload = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    except TypeError:
+        payload = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(payload["model_state_dict"])
     model.eval()
     return model
@@ -92,9 +140,20 @@ def _prepare_preserve_length(sequence: np.ndarray) -> dict:
 @torch.no_grad()
 def main() -> int:
     args = parse_args()
+    if not args.use_latest_checkpoint and not args.checkpoint:
+        raise SystemExit("Provide --checkpoint PATH or --use-latest-checkpoint (see --help).")
     cfg = load_cfg(args.config, runtime_profile=args.runtime_profile)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    checkpoint_path = Path(args.checkpoint).resolve()
+    if args.use_latest_checkpoint:
+        out_root = (
+            Path(args.outputs_root).resolve()
+            if args.outputs_root
+            else (PROJECT_ROOT / "outputs" / "ssr_gcn")
+        )
+        checkpoint_path = _find_latest_best_model(out_root)
+        print(f"[infer] Using latest checkpoint: {checkpoint_path}", flush=True)
+    else:
+        checkpoint_path = Path(args.checkpoint).resolve()
     input_dir = Path(args.input_dir).resolve()
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

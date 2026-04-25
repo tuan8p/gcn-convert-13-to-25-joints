@@ -161,6 +161,12 @@ def _build_loaders(
     persistent_workers = bool(training_cfg.get("persistent_workers", False))
 
     train_sampler = DistributedSampler(datasets["train"], shuffle=True) if is_distributed() else None
+    ddp_cfg = cfg.get("ddp") or {}
+    # DDP: cùng số bước/epoch mọi rank tránh kẹt ALLREDUCE; có thể tắt bằng ddp.drop_last: false
+    if is_distributed():
+        train_drop_last = bool(ddp_cfg.get("drop_last", True))
+    else:
+        train_drop_last = bool(ddp_cfg.get("drop_last", False))
     train_loader = DataLoader(
         datasets["train"],
         batch_size=train_batch_size,
@@ -169,7 +175,7 @@ def _build_loaders(
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers and num_workers > 0,
-        drop_last=False,
+        drop_last=train_drop_last,
     )
 
     if is_rank0():

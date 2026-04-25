@@ -50,6 +50,8 @@ training:
 
 ddp:
   backend: nccl
+  # torchrun: true (mặc định code) = drop_last train để mọi rank cùng số bước, tránh NCCL timeout
+  drop_last: true
 
 experiment:
   seed: 42
