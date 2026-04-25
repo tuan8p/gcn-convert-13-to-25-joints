@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -176,7 +177,6 @@ def main() -> int:
         json.dump(report, f, indent=2, ensure_ascii=False)
     print(f"\n[done] Report saved to {out_path}", flush=True)
 
-    import shutil
     zip_path = shutil.make_archive(
         str(infer_dir), "zip", root_dir=infer_dir.parent, base_dir=infer_dir.name
     )

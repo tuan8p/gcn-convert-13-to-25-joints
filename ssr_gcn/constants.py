@@ -97,8 +97,23 @@ TOYOTA_TO_NTU_25_MAP: list[int] = [
     3,
 ]
 
+# 7 phần tử đầu = 7 tên đầu trong JOINT_NAMES_TOYOTA_13
+# (Rank, Lank, Rkne, Lkne, Rhip, Lhip, Rwri) -> NTU: ankles/knees/hips + Rwri
+TOYOTA_FIRST7_NTU_INDICES: list[int] = TOYOTA_TO_NTU_25_MAP[:7]
+
 VISIBLE_NTU_JOINTS = set(TOYOTA_TO_NTU_25_MAP)
 MISSING_NTU_JOINTS = [idx for idx in range(25) if idx not in VISIBLE_NTU_JOINTS]
+
+# 6 phần còn lại trong tập 13 (Lwri, elbows, shoulders, head)
+TOYOTA_REST6_VISIBLE_NTU_INDICES: list[int] = [
+    j for j in TOYOTA_TO_NTU_25_MAP if j not in TOYOTA_FIRST7_NTU_INDICES
+]
+
+# Khớp thiếu ở phần đuôi/tay: lỗi thường cao; torô (0,1,2) tách riêng để trọng số
+TORSO_MISSING_NTU: frozenset[int] = frozenset({0, 1, 2})
+EXTREMITY_HEAVY_MISSING_NTU: frozenset[int] = frozenset(
+    {j for j in MISSING_NTU_JOINTS if j not in (0, 1, 2)}
+)
 
 ROOT_HIP_LEFT = 12
 ROOT_HIP_RIGHT = 16

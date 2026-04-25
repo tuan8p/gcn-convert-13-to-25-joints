@@ -1,0 +1,92 @@
+# R04 — Ổn định hình học: tăng bone loss, giảm lr + aug hơi nhẹ, vẫn weighted + combined.
+# Mục: giảm lệch tỷ lệ cơ thể khi tăng mạnh extremity ở R03; bổ trợ bảng ablation (khác trục R01).
+
+dataset:
+  npy_merged_path: /kaggle/input/datasets/tuan8p/etri-elderly-toyota13
+  train_ratio: 0.7
+  val_ratio: 0.2
+  test_ratio: 0.1
+  stratified_subject_split: true
+
+preprocessing:
+  fixed_len: 150
+
+augmentation:
+  enabled: true
+  rotation_deg: 12.0
+  jitter_std: 0.006
+
+model:
+  hidden_channels: 128
+  num_blocks: 8
+  temporal_kernel: 9
+  dropout: 0.12
+
+loss:
+  joint_weight: 1.0
+  bone_weight: 0.42
+  use_per_joint_mse_weight: true
+  use_weighted_bone: true
+  visible_mse_weight: 1.0
+  missing_base_mse_weight: 1.0
+  missing_torso_mult: 1.2
+  missing_extremity_mult: 1.75
+
+training:
+  per_gpu_batch_size: 128
+  val_per_gpu_batch_size: 256
+  epochs: 100
+  lr: 0.0005
+  min_lr: 0.00001
+  weight_decay: 0.0001
+  scheduler: cosine
+  lr_decay: 0.98
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  use_amp: true
+  amp_dtype: float16
+  compile: false
+  compile_mode: default
+  grad_clip: 1.0
+
+ddp:
+  backend: nccl
+
+experiment:
+  seed: 42
+  early_stopping: true
+  early_stopping_patience: 18
+  best_val_metric: combined
+  combined_val_w_mpjpe: 0.5
+  combined_val_w_extremity: 0.5
+  output_dir: outputs/ssr_gcn
+  subset_ratio: 1.0
+
+wandb:
+  enabled: true
+  project: DACN-SSR
+  entity: tuan8p
+  run_name: ablation_4R_R04_geo_stable
+  tags: [ablation, R04, high_bone, low_lr, mild_aug]
+
+runtime:
+  profile: t4
+
+runtime_profile:
+  t4:
+    training:
+      per_gpu_batch_size: 128
+      val_per_gpu_batch_size: 256
+      num_workers: 4
+      use_amp: true
+      amp_dtype: float16
+      compile: false
+  local_debug:
+    training:
+      per_gpu_batch_size: 2
+      val_per_gpu_batch_size: 2
+      num_workers: 0
+      persistent_workers: false
+      epochs: 2
+      compile: false

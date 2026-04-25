@@ -1,5 +1,8 @@
+# R02 — Cấu hình chính: trọng số joint + xương, checkpoint combined (0.5 MPJPE + 0.5 extremity).
+# Mục: “điểm cân bằng” để báo cáo và so với R01 / R03 / R04.
+
 dataset:
-  npy_merged_path: /kaggle/input/datasets/tuan8p/etri-elderly-toyota13 # ../data/processed/npy_merged
+  npy_merged_path: /kaggle/input/datasets/tuan8p/etri-elderly-toyota13
   train_ratio: 0.7
   val_ratio: 0.2
   test_ratio: 0.1
@@ -10,32 +13,31 @@ preprocessing:
 
 augmentation:
   enabled: true
-  rotation_deg: 15.0   # tăng nhẹ để model học robust hơn với missing extremity joints
+  rotation_deg: 15.0
   jitter_std: 0.008
 
 model:
-  hidden_channels: 128  # tăng từ 96 để có capacity học missing joints tốt hơn
-  num_blocks: 8         # tăng từ 6 để stack GCN sâu hơn
+  hidden_channels: 128
+  num_blocks: 8
   temporal_kernel: 9
   dropout: 0.1
 
 loss:
   joint_weight: 1.0
-  bone_weight: 0.3      # tăng từ 0.1 để penalize sai lệch tỷ lệ cơ thể mạnh hơn (đặc biệt foot joints)
-  # MSE theo từng joint: ưu tiên khớp *không có* trong Toyota-13 (tay/chân mạnh hơn thân 0,1,2)
+  bone_weight: 0.3
   use_per_joint_mse_weight: true
   use_weighted_bone: true
   visible_mse_weight: 1.0
   missing_base_mse_weight: 1.0
-  missing_torso_mult: 1.2      # SpineBase, SpineMid, Neck (0,1,2) — dễ hơn extremity, nhẹ hơn 1.0*ext
-  missing_extremity_mult: 1.75 # 9 khớp còn lại: tay, chân, ngón, SpineShoulder; MPJPE thường cao
+  missing_torso_mult: 1.2
+  missing_extremity_mult: 1.75
 
 training:
   per_gpu_batch_size: 128
   val_per_gpu_batch_size: 256
-  epochs: 100           # tăng từ 50 vì run trước best ở epoch 50 (cuối) — chưa hội tụ
+  epochs: 100
   lr: 0.001
-  min_lr: 0.000005      # giảm floor để cosine decay có dải rộng hơn ở 100 epoch
+  min_lr: 0.000005
   weight_decay: 0.0001
   scheduler: cosine
   lr_decay: 0.98
@@ -53,9 +55,8 @@ ddp:
 
 experiment:
   seed: 42
-  early_stopping: true  # bật vì train dài hơn, tránh lãng phí compute nếu hội tụ sớm
+  early_stopping: true
   early_stopping_patience: 15
-  # best Val checkpoint: mpjpe | extremity_missing_mpjpe | torso_missing_mpjpe | missing_mpjpe | combined
   best_val_metric: combined
   combined_val_w_mpjpe: 0.5
   combined_val_w_extremity: 0.5
@@ -66,8 +67,8 @@ wandb:
   enabled: true
   project: DACN-SSR
   entity: tuan8p
-  run_name: ssr_gcn_etri_elderly
-  tags: [ssr, gcn, etri_elderly, kaggle, 2xt4]
+  run_name: ablation_4R_R02_balanced_combined
+  tags: [ablation, R02, weighted_loss, combined_best]
 
 runtime:
   profile: t4

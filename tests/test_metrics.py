@@ -21,10 +21,13 @@ from ssr_gcn.metrics import (
     bone_length_error,
     bone_length_loss,
     bone_vectors,
+    build_joint_mse_weight_vector,
+    joint_mse_loss_weighted,
     missing_joint_mpjpe,
     mpjpe,
     per_joint_mpjpe,
     total_loss,
+    val_score_for_checkpoint,
     visible_joint_mpjpe,
 )
 from ssr_gcn.constants import NTU_EDGES
@@ -153,6 +156,56 @@ class TestTotalLoss:
         loss_2x, _ = total_loss(pred, target, joint_weight=2.0, bone_weight=0.0)
         assert float(loss_2x) == pytest.approx(float(loss_1x) * 2, rel=1e-5)
 
+    def test_unweighted_vector_matches_mse(self):
+        pred = _batch()
+        target = _batch(seed=1)
+        device = pred.device
+        w = build_joint_mse_weight_vector(
+            device,
+            torch.float32,
+            {
+                "visible_mse_weight": 1.0,
+                "missing_base_mse_weight": 1.0,
+                "missing_torso_mult": 1.0,
+                "missing_extremity_mult": 1.0,
+            },
+        )
+        loss_w, p_w = total_loss(
+            pred, target, 1.0, 0.0, joint_mse_weight_vector=w, use_weighted_bone=False
+        )
+        loss_u, p_u = total_loss(pred, target, 1.0, 0.0)
+        assert p_w["joint_loss"] == pytest.approx(p_u["joint_loss"], rel=1e-4)
+
+    def test_higher_extremity_weight_changes_joint_loss(self):
+        pred = _batch()
+        target = _batch(seed=1)
+        device = pred.device
+        w1 = build_joint_mse_weight_vector(
+            device,
+            torch.float32,
+            {
+                "visible_mse_weight": 1.0,
+                "missing_base_mse_weight": 1.0,
+                "missing_torso_mult": 1.0,
+                "missing_extremity_mult": 1.0,
+            },
+        )
+        w2 = build_joint_mse_weight_vector(
+            device,
+            torch.float32,
+            {
+                "visible_mse_weight": 1.0,
+                "missing_base_mse_weight": 1.0,
+                "missing_torso_mult": 1.0,
+                "missing_extremity_mult": 4.0,
+            },
+        )
+        j1 = joint_mse_loss_weighted(pred, target, w1)
+        j2 = joint_mse_loss_weighted(pred, target, w2)
+        assert float(j1) > 0.0
+        assert float(j2) > 0.0
+        assert float(j2) != pytest.approx(float(j1), abs=1e-6)
+
 
 # ---------------------------------------------------------------------------
 # MetricTracker
@@ -212,3 +265,34 @@ class TestPerJointMpjpe:
         result = per_joint_mpjpe(arr, arr)
         for v in result.values():
             assert v == pytest.approx(0.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# val_score_for_checkpoint
+# ---------------------------------------------------------------------------
+
+class TestValScoreForCheckpoint:
+    def test_combined(self):
+        vm = {"mpjpe": 0.1, "extremity_missing_mpjpe": 0.2}
+        name, _key, s = val_score_for_checkpoint(
+            vm,
+            {
+                "best_val_metric": "combined",
+                "combined_val_w_mpjpe": 0.5,
+                "combined_val_w_extremity": 0.5,
+            },
+        )
+        assert name == "combined"
+        assert s == pytest.approx(0.15)
+
+    def test_extremity_only(self):
+        vm = {"mpjpe": 0.1, "extremity_missing_mpjpe": 0.2}
+        name, _key, s = val_score_for_checkpoint(vm, {"best_val_metric": "extremity_missing_mpjpe"})
+        assert name == "extremity_missing_mpjpe"
+        assert s == pytest.approx(0.2)
+
+    def test_mpjpe_default(self):
+        vm = {"mpjpe": 0.07, "extremity_missing_mpjpe": 0.2}
+        name, _key, s = val_score_for_checkpoint(vm, {})
+        assert name == "mpjpe"
+        assert s == pytest.approx(0.07)

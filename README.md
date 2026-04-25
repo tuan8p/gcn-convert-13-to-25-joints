@@ -8,12 +8,21 @@ Pipeline Skeleton Super-Resolution (SSR) de hoc hoi quy tu skeleton `13 joints`
 - Train tren `ETRI elderly` bang cach lay skeleton goc `(T, 25, 3)`.
 - Tao input `13 joints` theo mapping Toyota-compatible.
 - Output la skeleton day du `(T, 25, 3)`.
-- Loss chinh: `joint MSE` + `bone length loss`.
-- Metric chinh: `MPJPE`; metric phu: `missing MPJPE`, `visible MPJPE`, `bone error`.
+- Loss chinh: `joint MSE` (co the **trong so theo joint**: visible Toyota-13 vs thieu; thieu **torso** 0,1,2 vs **extremity** tay/chan/ngon) + `bone length loss` (trong so canh theo joint neu bat `use_weighted_bone`).
+- Metric chinh: `MPJPE`; metric phu: `missing MPJPE`, `extremity_missing_mpjpe`, `torso_missing_mpjpe`, `visible MPJPE`, `bone error`.
+
+## Checkpoint / early stopping (val)
+
+- `experiment.best_val_metric`: `mpjpe` | `extremity_missing_mpjpe` | `torso_missing_mpjpe` | `missing_mpjpe` | `combined`
+- Voi `combined`: `combined_val_w_mpjpe` + `combined_val_w_extremity` (tong quy chuan hoa 1) — uu tien can bang tay/chan voi MPJPE tong.
+- `metrics.json` luu `best_val_score` (giong tieu chuan da chon), kem `best_val_mpjpe` / `best_val_extremity_missing_mpjpe` tai epoch do.
+
+**Preset mau:** `configs/ssr_gcn_strong_extremity.yaml` — `missing_extremity_mult: 2.25` va `best_val_metric: extremity_missing_mpjpe` (patience 20).
 
 ## Cau truc
 
-- `configs/ssr_gcn_kaggle.yaml`: config mac dinh cho Kaggle `2xT4`.
+- `configs/ssr_gcn_kaggle.yaml`: config mac dinh cho Kaggle `2xT4` ( `best_val_metric: combined` + loss trong so joint).
+- `configs/ssr_gcn_strong_extremity.yaml`: extremity nang + chon `best` theo `extremity_missing_mpjpe`.
 - `ssr_gcn/data.py`: split theo subject, resample `T=150`, normalize, augmentation.
 - `ssr_gcn/model.py`: baseline ST-GCN encoder-decoder nhe cho `13 -> 25`.
 - `ssr_gcn/engine.py`: train/val/test, DDP, checkpoint, metrics, figures, wandb.

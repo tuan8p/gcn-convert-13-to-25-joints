@@ -1,0 +1,90 @@
+# R01 — Ablation: MSE đều mọi joint + chọn best theo val MPJPE (không trọng số theo vùng).
+# Mục: đối chứng với R02 (có trọng số + combined).
+
+dataset:
+  npy_merged_path: /kaggle/input/datasets/tuan8p/etri-elderly-toyota13
+  train_ratio: 0.7
+  val_ratio: 0.2
+  test_ratio: 0.1
+  stratified_subject_split: true
+
+preprocessing:
+  fixed_len: 150
+
+augmentation:
+  enabled: true
+  rotation_deg: 15.0
+  jitter_std: 0.008
+
+model:
+  hidden_channels: 128
+  num_blocks: 8
+  temporal_kernel: 9
+  dropout: 0.1
+
+loss:
+  joint_weight: 1.0
+  bone_weight: 0.3
+  use_per_joint_mse_weight: false
+  use_weighted_bone: false
+  visible_mse_weight: 1.0
+  missing_base_mse_weight: 1.0
+  missing_torso_mult: 1.0
+  missing_extremity_mult: 1.0
+
+training:
+  per_gpu_batch_size: 128
+  val_per_gpu_batch_size: 256
+  epochs: 100
+  lr: 0.001
+  min_lr: 0.000005
+  weight_decay: 0.0001
+  scheduler: cosine
+  lr_decay: 0.98
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  use_amp: true
+  amp_dtype: float16
+  compile: false
+  compile_mode: default
+  grad_clip: 1.0
+
+ddp:
+  backend: nccl
+
+experiment:
+  seed: 42
+  early_stopping: true
+  early_stopping_patience: 15
+  best_val_metric: mpjpe
+  output_dir: outputs/ssr_gcn
+  subset_ratio: 1.0
+
+wandb:
+  enabled: true
+  project: DACN-SSR
+  entity: tuan8p
+  run_name: ablation_4R_R01_uniform_mse
+  tags: [ablation, R01, uniform_mse, mpjpe_best]
+
+runtime:
+  profile: t4
+
+runtime_profile:
+  t4:
+    training:
+      per_gpu_batch_size: 128
+      val_per_gpu_batch_size: 256
+      num_workers: 4
+      use_amp: true
+      amp_dtype: float16
+      compile: false
+  local_debug:
+    training:
+      per_gpu_batch_size: 2
+      val_per_gpu_batch_size: 2
+      num_workers: 0
+      persistent_workers: false
+      epochs: 2
+      compile: false

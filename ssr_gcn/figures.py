@@ -25,6 +25,24 @@ def save_all_figures(
 
     _save_curve(plt, training_log, fig_dir, "loss", "Loss", ("train_loss", "val_loss"))
     _save_curve(plt, training_log, fig_dir, "mpjpe", "MPJPE", ("train_mpjpe", "val_mpjpe"))
+    if _log_has_keys(training_log, ("train_extremity_missing_mpjpe", "val_extremity_missing_mpjpe")):
+        _save_curve(
+            plt,
+            training_log,
+            fig_dir,
+            "extremity_missing_mpjpe",
+            "Extremity missing MPJPE",
+            ("train_extremity_missing_mpjpe", "val_extremity_missing_mpjpe"),
+        )
+    if _log_has_keys(training_log, ("val_combined_score",)):
+        _save_curve(
+            plt,
+            training_log,
+            fig_dir,
+            "val_combined_score",
+            "Val combined score (checkpoint metric)",
+            ("val_combined_score", "val_combined_score"),
+        )
     _save_curve(
         plt,
         training_log,
@@ -45,6 +63,13 @@ def save_all_figures(
     _save_per_joint_bar(plt, test_metrics, fig_dir)
 
 
+def _log_has_keys(training_log: list[dict[str, Any]], keys: tuple[str, ...]) -> bool:
+    if not training_log:
+        return False
+    first = training_log[0]
+    return all(k in first for k in keys)
+
+
 def _save_curve(
     plt: Any,
     training_log: list[dict[str, Any]],
@@ -60,8 +85,11 @@ def _save_curve(
     val_values = [item.get(keys[1], 0.0) for item in training_log]
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(epochs, train_values, marker="o", markersize=3, linewidth=1.5, label="Train")
-    ax.plot(epochs, val_values, marker="s", markersize=3, linewidth=1.5, label="Val")
+    if keys[0] == keys[1]:
+        ax.plot(epochs, val_values, marker="s", markersize=3, linewidth=1.5, label=keys[1])
+    else:
+        ax.plot(epochs, train_values, marker="o", markersize=3, linewidth=1.5, label="Train")
+        ax.plot(epochs, val_values, marker="s", markersize=3, linewidth=1.5, label="Val")
     ax.set_xlabel("Epoch")
     ax.set_ylabel(ylabel)
     ax.set_title(f"{ylabel} Curve")
@@ -73,11 +101,24 @@ def _save_curve(
 
 
 def _save_summary_bar(plt: Any, test_metrics: dict[str, Any], fig_dir: Path) -> None:
-    keys = ["loss", "mpjpe", "missing_mpjpe", "visible_mpjpe", "bone_error"]
+    preferred = [
+        "loss",
+        "mpjpe",
+        "missing_mpjpe",
+        "extremity_missing_mpjpe",
+        "torso_missing_mpjpe",
+        "visible_mpjpe",
+        "bone_error",
+    ]
+    keys = [k for k in preferred if k in test_metrics]
+    if not keys:
+        keys = ["loss", "mpjpe", "missing_mpjpe", "visible_mpjpe", "bone_error"]
     values = [float(test_metrics.get(key, 0.0)) for key in keys]
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    bars = ax.bar(keys, values, color=["#5B8FF9", "#61DDAA", "#65789B", "#F6BD16", "#E8684A"])
+    fig, ax = plt.subplots(figsize=(10, 4))
+    cmap = plt.cm.get_cmap("tab10")
+    colors = [cmap(i % 10) for i in range(len(keys))]
+    bars = ax.bar(keys, values, color=colors)
     for bar, value in zip(bars, values):
         ax.text(bar.get_x() + bar.get_width() / 2, value, f"{value:.4f}", ha="center", va="bottom")
     ax.set_ylabel("Metric")

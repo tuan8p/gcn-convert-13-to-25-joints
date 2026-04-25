@@ -35,9 +35,13 @@ from ssr_gcn.logging_wandb import WandbLogger
 from ssr_gcn.metrics import (
     MetricTracker,
     bone_length_error,
+    build_joint_mse_weight_vector,
+    extremity_missing_mpjpe,
     missing_joint_mpjpe,
     mpjpe,
+    torso_missing_mpjpe,
     total_loss,
+    val_score_for_checkpoint,
     visible_joint_mpjpe,
 )
 from ssr_gcn.model import create_model
@@ -260,6 +264,26 @@ def _to_device(batch: dict[str, Any], device: torch.device) -> tuple[torch.Tenso
     return inputs, targets
 
 
+def _joint_mse_weight_vector(cfg: dict[str, Any], device: torch.device) -> torch.Tensor | None:
+    loss_cfg = cfg.get("loss") or {}
+    if not bool(loss_cfg.get("use_per_joint_mse_weight", True)):
+        return None
+    return build_joint_mse_weight_vector(device, torch.float32, loss_cfg)
+
+
+def _val_combined_log_score(val_metrics: dict[str, float], exp_cfg: dict[str, Any]) -> float:
+    w_m = float(exp_cfg.get("combined_val_w_mpjpe", 0.5))
+    w_e = float(exp_cfg.get("combined_val_w_extremity", 0.5))
+    s = w_m + w_e
+    if s <= 0:
+        w_m, w_e, s = 0.5, 0.5, 1.0
+    w_m /= s
+    w_e /= s
+    mp = float(val_metrics.get("mpjpe", 0.0))
+    ex = float(val_metrics.get("extremity_missing_mpjpe", 0.0))
+    return w_m * mp + w_e * ex
+
+
 def _run_train_epoch(
     model: torch.nn.Module,
     loader: DataLoader,
@@ -278,8 +302,11 @@ def _run_train_epoch(
     use_amp = bool((cfg.get("training") or {}).get("use_amp", True)) and device.type == "cuda"
     amp_dtype = torch.float16 if str((cfg.get("training") or {}).get("amp_dtype", "float16")) == "float16" else torch.bfloat16
     grad_clip = float((cfg.get("training") or {}).get("grad_clip", 0.0))
-    joint_weight = float((cfg.get("loss") or {}).get("joint_weight", 1.0))
-    bone_weight = float((cfg.get("loss") or {}).get("bone_weight", 0.1))
+    loss_cfg = cfg.get("loss") or {}
+    joint_weight = float(loss_cfg.get("joint_weight", 1.0))
+    bone_weight = float(loss_cfg.get("bone_weight", 0.1))
+    use_weighted_bone = bool(loss_cfg.get("use_weighted_bone", True))
+    j_wvec = _joint_mse_weight_vector(cfg, device)
     start = time.perf_counter()
 
     pbar = tqdm(
@@ -299,6 +326,8 @@ def _run_train_epoch(
                 targets,
                 joint_weight=joint_weight,
                 bone_weight=bone_weight,
+                joint_mse_weight_vector=j_wvec,
+                use_weighted_bone=use_weighted_bone,
             )
         scaler.scale(loss).backward()
         if grad_clip > 0:
@@ -314,6 +343,10 @@ def _run_train_epoch(
                 "bone_loss": loss_parts["bone_loss"],
                 "mpjpe": float(mpjpe(predictions, targets).detach().item()),
                 "missing_mpjpe": float(missing_joint_mpjpe(predictions, targets).detach().item()),
+                "extremity_missing_mpjpe": float(
+                    extremity_missing_mpjpe(predictions, targets).detach().item()
+                ),
+                "torso_missing_mpjpe": float(torso_missing_mpjpe(predictions, targets).detach().item()),
                 "visible_mpjpe": float(visible_joint_mpjpe(predictions, targets).detach().item()),
                 "bone_error": float(bone_length_error(predictions, targets).detach().item()),
             }
@@ -355,8 +388,11 @@ def _run_eval_epoch(
     frame_count = 0
     use_amp = bool((cfg.get("training") or {}).get("use_amp", True)) and device.type == "cuda"
     amp_dtype = torch.float16 if str((cfg.get("training") or {}).get("amp_dtype", "float16")) == "float16" else torch.bfloat16
-    joint_weight = float((cfg.get("loss") or {}).get("joint_weight", 1.0))
-    bone_weight = float((cfg.get("loss") or {}).get("bone_weight", 0.1))
+    loss_cfg = cfg.get("loss") or {}
+    joint_weight = float(loss_cfg.get("joint_weight", 1.0))
+    bone_weight = float(loss_cfg.get("bone_weight", 0.1))
+    use_weighted_bone = bool(loss_cfg.get("use_weighted_bone", True))
+    j_wvec = _joint_mse_weight_vector(cfg, device)
 
     start = time.perf_counter()
     pbar = tqdm(loader, desc=desc, leave=False, disable=not is_rank0(), unit="batch")
@@ -369,6 +405,8 @@ def _run_eval_epoch(
                 targets,
                 joint_weight=joint_weight,
                 bone_weight=bone_weight,
+                joint_mse_weight_vector=j_wvec,
+                use_weighted_bone=use_weighted_bone,
             )
 
         joint_errors = torch.linalg.norm(predictions - targets, dim=-1)
@@ -381,6 +419,10 @@ def _run_eval_epoch(
             "bone_loss": loss_parts["bone_loss"],
             "mpjpe": float(mpjpe(predictions, targets).detach().item()),
             "missing_mpjpe": float(missing_joint_mpjpe(predictions, targets).detach().item()),
+            "extremity_missing_mpjpe": float(
+                extremity_missing_mpjpe(predictions, targets).detach().item()
+            ),
+            "torso_missing_mpjpe": float(torso_missing_mpjpe(predictions, targets).detach().item()),
             "visible_mpjpe": float(visible_joint_mpjpe(predictions, targets).detach().item()),
             "bone_error": float(bone_length_error(predictions, targets).detach().item()),
         }
@@ -388,6 +430,7 @@ def _run_eval_epoch(
         pbar.set_postfix(
             loss=f"{batch_metrics['loss']:.4f}",
             mpjpe=f"{batch_metrics['mpjpe']:.4f}",
+            ex_m=f"{batch_metrics['extremity_missing_mpjpe']:.4f}",
             bone=f"{batch_metrics['bone_error']:.4f}",
         )
 
@@ -491,16 +534,23 @@ def run(cfg: dict[str, Any], args: Any) -> int:
         wandb_logger.log_config(cfg)
 
     training_log: list[dict[str, Any]] = []
-    patience = int((cfg.get("experiment") or {}).get("early_stopping_patience", 10))
-    best_metric = float("inf")
+    exp_cfg = cfg.get("experiment") or {}
+    patience = int(exp_cfg.get("early_stopping_patience", 10))
+    best_score = float("inf")
     best_epoch = 0
+    best_val_mpjpe_at_best: float = 0.0
+    best_val_extremity_at_best: float = 0.0
+    best_val_torso_at_best: float = 0.0
+    best_selection_name: str = str(exp_cfg.get("best_val_metric", "mpjpe"))
     epochs_without_improvement = 0
     best_checkpoint_path = output_dir / "best_model.pt"
 
     if is_rank0():
+        bvm = str(exp_cfg.get("best_val_metric", "mpjpe"))
         print(
             f"[train] Starting — epochs={epochs}  patience={patience}  "
-            f"lr={float((cfg.get('training') or {}).get('lr', 1e-3)):.2e}",
+            f"lr={float((cfg.get('training') or {}).get('lr', 1e-3)):.2e}  "
+            f"best_val_metric={bvm}",
             flush=True,
         )
 
@@ -524,31 +574,57 @@ def run(cfg: dict[str, Any], args: Any) -> int:
             if is_rank0():
                 print(f"[epoch {epoch:03d}] Train done — running val eval...", flush=True)
                 val_metrics = _run_eval_epoch(_unwrap_model(model), val_loader, device, cfg, desc=f"Val {epoch}")
+                sel_name, _sel_log_key, score_for_best = val_score_for_checkpoint(
+                    {k: float(v) for k, v in val_metrics.items() if isinstance(v, (int, float))},
+                    exp_cfg,
+                )
+                val_comb = _val_combined_log_score(
+                    {k: float(v) for k, v in val_metrics.items() if isinstance(v, (int, float))},
+                    exp_cfg,
+                )
                 epoch_log = {
                     "epoch": epoch,
                     "lr": float(optimizer.param_groups[0]["lr"]),
                     "train_loss": train_metrics.get("loss", 0.0),
                     "train_mpjpe": train_metrics.get("mpjpe", 0.0),
                     "train_missing_mpjpe": train_metrics.get("missing_mpjpe", 0.0),
+                    "train_extremity_missing_mpjpe": train_metrics.get("extremity_missing_mpjpe", 0.0),
+                    "train_torso_missing_mpjpe": train_metrics.get("torso_missing_mpjpe", 0.0),
                     "train_visible_mpjpe": train_metrics.get("visible_mpjpe", 0.0),
                     "train_bone_error": train_metrics.get("bone_error", 0.0),
                     "train_samples_per_sec": train_metrics.get("samples_per_sec", 0.0),
                     "val_loss": val_metrics.get("loss", 0.0),
                     "val_mpjpe": val_metrics.get("mpjpe", 0.0),
                     "val_missing_mpjpe": val_metrics.get("missing_mpjpe", 0.0),
+                    "val_extremity_missing_mpjpe": val_metrics.get("extremity_missing_mpjpe", 0.0),
+                    "val_torso_missing_mpjpe": val_metrics.get("torso_missing_mpjpe", 0.0),
+                    "val_combined_score": val_comb,
                     "val_visible_mpjpe": val_metrics.get("visible_mpjpe", 0.0),
                     "val_bone_error": val_metrics.get("bone_error", 0.0),
+                    "val_score_for_checkpoint": score_for_best,
+                    "val_selection_metric": sel_name,
                     "val_samples_per_sec": val_metrics.get("samples_per_sec", 0.0),
                     "epoch_time_sec": train_metrics.get("epoch_time_sec", 0.0),
                 }
                 training_log.append(epoch_log)
                 wandb_logger.log_epoch({f"train/{k}": v for k, v in train_metrics.items()}, step=epoch)
                 wandb_logger.log_epoch({f"val/{k}": v for k, v in val_metrics.items()}, step=epoch)
+                wandb_logger.log_epoch(
+                    {
+                        "val/val_combined_score": val_comb,
+                        "val/val_score_for_checkpoint": score_for_best,
+                    },
+                    step=epoch,
+                )
                 wandb_logger.log_epoch({"train/lr": epoch_log["lr"]}, step=epoch)
 
-                if epoch_log["val_mpjpe"] < best_metric:
-                    best_metric = epoch_log["val_mpjpe"]
+                if score_for_best < best_score:
+                    best_score = score_for_best
                     best_epoch = epoch
+                    best_selection_name = sel_name
+                    best_val_mpjpe_at_best = float(val_metrics.get("mpjpe", 0.0))
+                    best_val_extremity_at_best = float(val_metrics.get("extremity_missing_mpjpe", 0.0))
+                    best_val_torso_at_best = float(val_metrics.get("torso_missing_mpjpe", 0.0))
                     epochs_without_improvement = 0
                     _save_checkpoint(output_dir, model, optimizer, epoch, val_metrics)
                 else:
@@ -560,6 +636,8 @@ def run(cfg: dict[str, Any], args: Any) -> int:
                     f"train_mpjpe={epoch_log['train_mpjpe']:.4f} "
                     f"val_loss={epoch_log['val_loss']:.4f} "
                     f"val_mpjpe={epoch_log['val_mpjpe']:.4f} "
+                    f"val_ex={epoch_log['val_extremity_missing_mpjpe']:.4f} "
+                    f"val_score={score_for_best:.4f}({sel_name}) "
                     f"val_bone={epoch_log['val_bone_error']:.4f} "
                     f"lr={epoch_log['lr']:.2e} "
                     f"train_sps={epoch_log['train_samples_per_sec']:.1f} "
@@ -588,22 +666,21 @@ def run(cfg: dict[str, Any], args: Any) -> int:
             if best_checkpoint_path.exists():
                 _load_checkpoint(model, best_checkpoint_path, device=device)
             test_metrics = _run_eval_epoch(_unwrap_model(model), test_loader, device, cfg, desc="Test")
-            test_metrics["best_epoch"] = best_epoch
-            test_metrics["best_val_mpjpe"] = best_metric
 
             with (output_dir / "training_log.json").open("w", encoding="utf-8") as file:
                 json.dump({"log": training_log}, file, indent=2, ensure_ascii=False)
+            metrics_payload: dict[str, Any] = {
+                "best_epoch": best_epoch,
+                "best_val_metric": str(exp_cfg.get("best_val_metric", "mpjpe")),
+                "best_val_score": best_score,
+                "best_val_selection": best_selection_name,
+                "best_val_mpjpe": best_val_mpjpe_at_best,
+                "best_val_extremity_missing_mpjpe": best_val_extremity_at_best,
+                "best_val_torso_missing_mpjpe": best_val_torso_at_best,
+                "test": test_metrics,
+            }
             with (output_dir / "metrics.json").open("w", encoding="utf-8") as file:
-                json.dump(
-                    {
-                        "best_epoch": best_epoch,
-                        "best_val_mpjpe": best_metric,
-                        "test": test_metrics,
-                    },
-                    file,
-                    indent=2,
-                    ensure_ascii=False,
-                )
+                json.dump(metrics_payload, file, indent=2, ensure_ascii=False)
 
             save_all_figures(training_log=training_log, test_metrics=test_metrics, output_dir=output_dir)
             wandb_logger.log_test_metrics(test_metrics)
