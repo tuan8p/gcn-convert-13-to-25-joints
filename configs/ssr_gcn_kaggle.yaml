@@ -33,7 +33,7 @@ loss:
 training:
   per_gpu_batch_size: 128
   val_per_gpu_batch_size: 256
-  epochs: 100           # tăng từ 50 vì run trước best ở epoch 50 (cuối) — chưa hội tụ
+  epochs: 200           # tăng từ 50 vì run trước best ở epoch 50 (cuối) — chưa hội tụ
   lr: 0.001
   min_lr: 0.000005      # giảm floor để cosine decay có dải rộng hơn ở 100 epoch
   weight_decay: 0.0001
