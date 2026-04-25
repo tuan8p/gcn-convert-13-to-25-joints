@@ -5,7 +5,7 @@
 # patience lớn hơn (metric 9 joint nhiễu hơn MPJPE tổng).
 
 dataset:
-  npy_merged_path: /kaggle/input/datasets/tuan8p/etri-elderly-toyota13
+  npy_merged_path: /kaggle/input/datasets/tuan8p/etri-elderly-toyota13toyota-smarthome-13
   train_ratio: 0.7
   val_ratio: 0.2
   test_ratio: 0.1
